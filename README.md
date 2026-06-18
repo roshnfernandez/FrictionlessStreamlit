@@ -23,7 +23,6 @@ data, built around real, well-documented top-level functions and classes.
 - `features.py` — one function per feature, calling real `frictionless` functions/classes
 - `app.py` — the Streamlit UI, one tab per feature
 - `sample_data/countries_valid.csv` — a clean sample file
-- `sample_data/countries_invalid.csv` — a deliberately messy file (blank
   header, duplicate header, missing cells, a blank row, and an extra
   cell), reproducing the same error categories shown in frictionless's
   own documentation examples

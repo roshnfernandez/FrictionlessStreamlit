@@ -13,7 +13,6 @@ Ships with two built-in sample CSVs (sample_data/countries_valid.csv and
 sample_data/countries_invalid.csv) so it works out of the box with no
 upload required.
 """
-import json
 import os
 import tempfile
 
@@ -36,7 +35,7 @@ def file_picker(key):
         key=key,
         horizontal=True,
     )
-    return VALID_CSV if "valid" in choice else INVALID_CSV
+    return VALID_CSV if choice == "countries_valid.csv (clean)" else INVALID_CSV
 
 
 def show_raw_csv(path):
@@ -84,7 +83,7 @@ tabs = st.tabs([
 with tabs[0]:
     st.subheader("Feature 1 — `describe()`: infer a schema")
     st.code('from frictionless import describe\nresource = describe(path)', language="python")
-    path = file_picker("describe_file")
+    path = VALID_CSV
     show_raw_csv(path)
     if st.button("Describe", key="btn_describe"):
         resource = f.describe_file(path)
@@ -95,7 +94,7 @@ with tabs[0]:
 with tabs[1]:
     st.subheader("Feature 2 — `extract()`: read normalized rows")
     st.code('from frictionless import extract\nrows = extract(path)', language="python")
-    path2 = file_picker("extract_file")
+    path2 = VALID_CSV
     if st.button("Extract rows", key="btn_extract"):
         rows = f.extract_rows(path2)
         st.write(f"{len(rows)} row(s) extracted, cells cast to inferred types:")
@@ -163,9 +162,7 @@ with tabs[4]:
                 specs.append((name.strip(), type_str.strip()))
         schema = f.build_schema(specs)
         st.session_state["built_schema"] = schema  # used later by tab 10
-        # Metadata classes (Schema, Resource, ...) are dict subclasses in
-        # frictionless, so schema itself is already JSON-serializable.
-        st.json(dict(schema))
+        st.json(schema.to_dict())
 
 # 6. DETECTOR -----------------------------------------------------------------
 with tabs[5]:
@@ -176,7 +173,7 @@ with tabs[5]:
         'resource = describe(path, detector=detector)',
         language="python",
     )
-    path6 = file_picker("detector_file")
+    path6 = VALID_CSV
     force_type = st.selectbox(
         "Force every field to this type (or leave default to auto-infer)",
         ["(auto-infer)", "string", "integer", "number", "any"],
@@ -220,7 +217,7 @@ with tabs[7]:
         'print(resource.stats)  # hash, bytes, fields, rows',
         language="python",
     )
-    path8 = file_picker("resource_file")
+    path8 = VALID_CSV
     if st.button("Explore resource", key="btn_resource"):
         resource = f.explore_resource(path8)
         c1, c2 = st.columns(2)
@@ -264,7 +261,7 @@ with tabs[8]:
         'target = transform(path, steps=[steps.field_filter(names=["id", "name"])])',
         language="python",
     )
-    path9 = file_picker("transform_file_a")
+    path9 = VALID_CSV
     cols = st.text_input("Columns to keep (comma-separated)", value="id,name", key="keep_cols")
     if st.button("Transform: keep columns", key="btn_transform_fields"):
         names = [c.strip() for c in cols.split(",") if c.strip()]
@@ -280,7 +277,7 @@ with tabs[8]:
         '])',
         language="python",
     )
-    path9b = file_picker("transform_file_b")
+    path9b = VALID_CSV
     formula = st.text_input("Row filter formula", value="population > 50000000", key="row_formula")
     if st.button("Transform: filter rows", key="btn_transform_rows"):
         target = f.transform_filter_rows(path9b, formula)
@@ -294,7 +291,7 @@ with tabs[9]:
         "Uses the schema built in tab 5 if available, otherwise describes "
         "the chosen sample file first."
     )
-    path10 = file_picker("save_schema_file")
+    path10 = VALID_CSV
     fmt = st.radio("Save as", ["JSON", "YAML"], key="save_fmt", horizontal=True)
     if st.button("Save schema", key="btn_save_schema"):
         schema = st.session_state.get("built_schema")

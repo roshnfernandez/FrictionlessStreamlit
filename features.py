@@ -11,11 +11,12 @@ steps, checks.
 
 Requires: pip install frictionless
 """
+import os
+
 from frictionless import (
     Checklist,
     Detector,
     Field,
-    Pipeline,
     Resource,
     Schema,
     checks,
@@ -23,7 +24,7 @@ from frictionless import (
     extract,
     steps,
     validate,
-    system
+    system, transform
 )
 
 
@@ -116,7 +117,7 @@ def explore_resource(path):
     """Feature 8: Resource - open a resource and inspect its metadata
     (format, encoding, schema) and stats (rows, bytes, hash) after a
     read. Returns the opened resource object."""
-    resource = Resource(path)
+    resource = Resource(path=path)
     resource.infer(stats=True)
     return resource
 
@@ -125,18 +126,27 @@ def explore_resource(path):
 def transform_keep_fields(path, field_names):
     """Feature 9: Resource.transform() + Pipeline - keep only the given
     columns, dropping the rest, producing a cleaned target resource."""
-    pipeline = Pipeline(steps=[steps.field_filter(names=field_names)])
-    target = Resource(path).transform(pipeline)
+    safe_path = os.path.relpath(path)
+    target = transform(
+        source=safe_path,
+        steps=[steps.field_filter(names=field_names)]
+    )
     return target
 
 
 def transform_filter_rows(path, formula):
     """Feature 9b: Resource.transform() + Pipeline - keep only rows for
     which `formula` (a simpleeval expression over field names) is true."""
-    pipeline = Pipeline(
-        steps=[steps.table_normalize(), steps.row_filter(formula=formula)]
+    safe_path = os.path.relpath(path)
+    resource = Resource(path = str(safe_path))
+    resource.infer()
+    target = transform(
+        source=resource,
+        steps=[
+            steps.table_normalize(),
+            steps.row_filter(formula=formula)
+        ]
     )
-    target = Resource(path).transform(pipeline)
     return target
 
 
