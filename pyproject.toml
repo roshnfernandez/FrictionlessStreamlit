@@ -1,0 +1,10 @@
+[project]
+name = "pds-mini-project"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "sql>=2022.4.0",
+    "streamlit>=1.58.0",
+]
