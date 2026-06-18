@@ -1,247 +1,316 @@
 """
 app.py
 ======
-Streamlit demo of 10 features of the `sql` package (sql>=2022.4.0),
-a tiny "DB API 2.0 for Humans" wrapper around any PEP 249 connection.
+Streamlit demo of 10 features of the `frictionless` package
+(https://pypi.org/project/frictionless/), the DEVT (Describe, Extract,
+Validate, Transform) data framework.
 
 Run with:
+    pip install -r requirements.txt
     streamlit run app.py
 
-Everything in this UI is backed by features.py, which itself only calls
-sql.SQL's four real methods: run(), commit(), one(), all().
+Ships with two built-in sample CSVs (sample_data/countries_valid.csv and
+sample_data/countries_invalid.csv) so it works out of the box with no
+upload required.
 """
+import json
+import os
+import tempfile
+
 import streamlit as st
+
 import features as f
 
-st.set_page_config(page_title="sql package demo", page_icon="🗄️", layout="wide")
+st.set_page_config(page_title="frictionless demo", page_icon="🧹", layout="wide")
+
+SAMPLE_DIR = os.path.join(os.path.dirname(__file__), "sample_data")
+VALID_CSV = os.path.join(SAMPLE_DIR, "countries_valid.csv")
+INVALID_CSV = os.path.join(SAMPLE_DIR, "countries_invalid.csv")
 
 
-# --- session state: one sql.SQL instance shared across reruns ----------
-if "bliss" not in st.session_state:
-    st.session_state.bliss = f.get_bliss(":memory:")
-    f.create_table(st.session_state.bliss)
-    st.session_state.bliss.commit()
-
-bliss = st.session_state.bliss
-
-
-def render_records(records, empty_msg="No rows."):
-    """Render a list of namedtuples (from sql.SQL.all) as a table."""
-    if not records:
-        st.info(empty_msg)
-        return
-    columns = records[0]._fields
-    data = [dict(zip(columns, r)) for r in records]
-    st.table(data)
+def file_picker(key):
+    """Shared widget: choose between the two bundled sample CSVs."""
+    choice = st.radio(
+        "Sample file",
+        ["countries_valid.csv (clean)", "countries_invalid.csv (messy)"],
+        key=key,
+        horizontal=True,
+    )
+    return VALID_CSV if "valid" in choice else INVALID_CSV
 
 
-st.title("`sql` package")
+def show_raw_csv(path):
+    with open(path) as fh:
+        st.code(fh.read(), language="text")
+
+
+st.title("🧹 `frictionless` package — 10 features demo")
 st.caption(
-    "Every action below calls straight into `sql.SQL.run()`, `.commit()`, "
-    "`.one()`, or `.all()` — the package's entire public API."
+    "Every action below calls a real `frictionless` function: `describe`, "
+    "`extract`, `validate`, `transform`, `Resource`, `Schema`, `Detector`, "
+    "or `Report.flatten()`."
 )
 
-with st.expander("What is the `sql` package?", expanded=False):
+with st.expander("What is `frictionless`?", expanded=False):
     st.markdown(
-        "[`sql`](https://pypi.org/project/sql/) (`uv add sql`) is a "
-        "tiny wrapper around any DB API 2.0 connection (sqlite3, psycopg2, "
-        "etc). It has exactly **4 methods**:\n\n"
-        "- `run(query, args=None)` — execute a statement, ignore the result, return `self`\n"
-        "- `commit()` — shortcut for `connection.commit()`, also returns `self` so it chains\n"
-        "- `one(query, args=None)` — fetch a single row: a scalar if one column, a namedtuple if several\n"
-        "- `all(query, args=None)` — fetch every row, same scalar/namedtuple rule\n\n"
-        "The 10 tabs here show 10 different ways of combining those 4 methods."
+        "[`frictionless`](https://pypi.org/project/frictionless/) "
+        "(`pip install frictionless`) is a data management framework "
+        "built around four ideas, sometimes called **DEVT**:\n\n"
+        "- **Describe** — infer/edit metadata (schema, field types) for a table\n"
+        "- **Extract** — read & normalize tabular data from CSV, Excel, JSON, SQL, etc.\n"
+        "- **Validate** — check a table against its schema and report problems\n"
+        "- **Transform** — clean and reshape data via composable `steps`\n\n"
+        "The 10 tabs below show 10 different ways of using these four capabilities."
+    )
+    st.caption(
+        "⚠️ This app requires the real `frictionless` package — "
+        "`pip install -r requirements.txt` before running."
     )
 
 tabs = st.tabs([
-    "1. Create table",
-    "2. Single insert",
-    "3. Batch insert",
-    "4. Chained insert+commit",
-    "5. Commit",
-    "6. Fetch one",
-    "7. Fetch all",
-    "8. Update",
-    "9. Delete",
-    "10. Reset (drop table)",
+    "1. Describe",
+    "2. Extract",
+    "3. Validate",
+    "4. Custom check",
+    "5. Build schema",
+    "6. Detector",
+    "7. Flatten report",
+    "8. Resource stats",
+    "9. Transform",
+    "10. Save schema",
 ])
 
-# 1. CREATE TABLE ---------------------------------------------------------
+# 1. DESCRIBE ---------------------------------------------------------------
 with tabs[0]:
-    st.subheader("Feature 1 — `run()` for DDL: CREATE TABLE")
-    st.code(
-        'bliss.run("CREATE TABLE IF NOT EXISTS contributors '
-        '(firstname VARCHAR, lastname VARCHAR, commits INTEGER)")',
-        language="python",
-    )
-    if st.button("Create table", key="btn_create"):
-        msg = f.create_table(bliss)
-        bliss.commit()
-        st.success(msg)
+    st.subheader("Feature 1 — `describe()`: infer a schema")
+    st.code('from frictionless import describe\nresource = describe(path)', language="python")
+    path = file_picker("describe_file")
+    show_raw_csv(path)
+    if st.button("Describe", key="btn_describe"):
+        resource = f.describe_file(path)
+        st.write("Inferred schema (field name → type):")
+        st.json({fld.name: fld.type for fld in resource.schema.fields})
 
-# 2. SINGLE INSERT ----------------------------------------------------------
+# 2. EXTRACT ------------------------------------------------------------------
 with tabs[1]:
-    st.subheader("Feature 2 — `run()` with a single tuple of args: INSERT")
+    st.subheader("Feature 2 — `extract()`: read normalized rows")
+    st.code('from frictionless import extract\nrows = extract(path)', language="python")
+    path2 = file_picker("extract_file")
+    if st.button("Extract rows", key="btn_extract"):
+        rows = f.extract_rows(path2)
+        st.write(f"{len(rows)} row(s) extracted, cells cast to inferred types:")
+        st.table([dict(row) for row in rows])
+
+# 3. VALIDATE -------------------------------------------------------------
+with tabs[2]:
+    st.subheader("Feature 3 — `validate()`: run default checks")
+    st.code('from frictionless import validate\nreport = validate(path)', language="python")
+    path3 = file_picker("validate_file")
+    if st.button("Validate", key="btn_validate"):
+        report = f.validate_file(path3)
+        if report.valid:
+            st.success("✅ report.valid = True — no errors found.")
+        else:
+            st.error("❌ report.valid = False — errors found:")
+            rows = f.flatten_report(report, ["rowNumber", "fieldNumber", "type", "note"])
+            st.table([
+                {"row": r[0], "field": r[1], "type": r[2], "note": r[3]}
+                for r in rows
+            ])
+
+# 4. VALIDATE WITH CUSTOM CHECK ---------------------------------------------
+with tabs[3]:
+    st.subheader("Feature 4 — `validate()` with a custom check")
+    st.caption("`checks.sequential_value` confirms a column counts up without gaps.")
     st.code(
-        'bliss.run("INSERT INTO contributors VALUES (?, ?, ?)", '
-        '(firstname, lastname, commits))',
+        'from frictionless import validate, checks\n'
+        'report = validate(path, checks=[checks.sequential_value(field_name="id")])',
         language="python",
     )
-    c1, c2, c3 = st.columns(3)
-    fn = c1.text_input("First name", value="Guido", key="ins_fn")
-    ln = c2.text_input("Last name", value="van Rossum", key="ins_ln")
-    cm = c3.number_input("Commits", min_value=0, value=100, key="ins_cm")
-    if st.button("Insert row", key="btn_insert_one"):
-        msg = f.insert_one(bliss, fn, ln, int(cm))
-        bliss.commit()
-        st.success(msg)
+    path4 = file_picker("custom_check_file")
+    field_for_check = st.text_input("Field to check for sequential values", value="id", key="seq_field")
+    if st.button("Validate with sequential_value check", key="btn_custom_check"):
+        report = f.validate_with_sequential_check(path4, field_for_check)
+        if report.valid:
+            st.success(f"✅ '{field_for_check}' is sequential and the file is otherwise valid.")
+        else:
+            rows = f.flatten_report(report, ["rowNumber", "fieldNumber", "type", "note"])
+            st.table([
+                {"row": r[0], "field": r[1], "type": r[2], "note": r[3]}
+                for r in rows
+            ])
 
-# 3. BATCH INSERT -----------------------------------------------------------
-with tabs[2]:
-    st.subheader("Feature 3 — `run()` with a *list* of tuples: batch INSERT")
-    st.caption("Internally this routes to `cursor.executemany(...)`.")
+# 5. BUILD SCHEMA MANUALLY ---------------------------------------------------
+with tabs[4]:
+    st.subheader("Feature 5 — `Schema`: build a schema by hand")
     st.code(
-        'bliss.run("INSERT INTO contributors VALUES (?, ?, ?)", [\n'
-        '    ("Andrew", "Kuchling", 5),\n'
-        '    ("James", "Henstridge", 12),\n'
-        '    ("Daniele", "Varrazzo", 30),\n'
+        'from frictionless import Schema, fields\n'
+        'schema = Schema(fields=[fields.IntegerField(name="id"), '
+        'fields.StringField(name="name")])',
+        language="python",
+    )
+    st.caption("Define fields below, one per line, as `name:type` (type ∈ integer, string, number, boolean, date).")
+    spec_text = st.text_area(
+        "Field specs",
+        value="id:integer\nname:string\npopulation:number",
+        key="schema_spec",
+    )
+    if st.button("Build schema", key="btn_build_schema"):
+        specs = []
+        for line in spec_text.strip().splitlines():
+            if ":" in line:
+                name, type_str = line.split(":", 1)
+                specs.append((name.strip(), type_str.strip()))
+        schema = f.build_schema(specs)
+        st.session_state["built_schema"] = schema  # used later by tab 10
+        # Metadata classes (Schema, Resource, ...) are dict subclasses in
+        # frictionless, so schema itself is already JSON-serializable.
+        st.json(dict(schema))
+
+# 6. DETECTOR -----------------------------------------------------------------
+with tabs[5]:
+    st.subheader("Feature 6 — `Detector`: control inference behavior")
+    st.code(
+        'from frictionless import Detector, describe\n'
+        'detector = Detector(field_type="string")  # force every field to one type\n'
+        'resource = describe(path, detector=detector)',
+        language="python",
+    )
+    path6 = file_picker("detector_file")
+    force_type = st.selectbox(
+        "Force every field to this type (or leave default to auto-infer)",
+        ["(auto-infer)", "string", "integer", "number", "any"],
+        key="detector_type",
+    )
+    if st.button("Describe with Detector", key="btn_detector"):
+        field_type = None if force_type == "(auto-infer)" else force_type
+        resource = f.describe_with_detector(path6, field_type=field_type)
+        st.json({fld.name: fld.type for fld in resource.schema.fields})
+
+# 7. FLATTEN REPORT -----------------------------------------------------------
+with tabs[6]:
+    st.subheader("Feature 7 — `report.flatten()`: simplify validation errors")
+    st.caption(
+        "Validation reports can be deeply nested (grouped by task/file). "
+        "`flatten()` turns them into one flat row per error."
+    )
+    st.code(
+        'report = validate(path)\n'
+        'report.flatten(["rowNumber", "fieldNumber", "code", "message"])',
+        language="python",
+    )
+    path7 = file_picker("flatten_file")
+    if st.button("Validate + flatten", key="btn_flatten"):
+        report = f.validate_file(path7)
+        flat = f.flatten_report(report, ["rowNumber", "fieldNumber", "code", "message"])
+        if not flat:
+            st.success("No errors to flatten — file is valid.")
+        else:
+            st.write(f"{len(flat)} error(s), flattened to a simple list:")
+            for row in flat:
+                st.write(f"`{row}`")
+
+# 8. RESOURCE STATS -------------------------------------------------------
+with tabs[7]:
+    st.subheader("Feature 8 — `Resource`: explore metadata & stats")
+    st.code(
+        'from frictionless import Resource\n'
+        'resource = Resource(path)\n'
+        'resource.infer(stats=True)\n'
+        'print(resource.stats)  # hash, bytes, fields, rows',
+        language="python",
+    )
+    path8 = file_picker("resource_file")
+    if st.button("Explore resource", key="btn_resource"):
+        resource = f.explore_resource(path8)
+        c1, c2 = st.columns(2)
+        with c1:
+            st.write("**Metadata**")
+            st.json({
+                "name": resource.name,
+                "format": resource.format,
+                "encoding": resource.encoding,
+                "scheme": resource.scheme,
+            })
+        with c2:
+            st.write("**Stats**")
+            stats = resource.stats
+            # resource.stats behaves like a dict-ish metadata object in
+            # frictionless; read defensively in case it's attribute-only
+            # or mapping-only depending on installed version.
+            def _get(obj, key, default=None):
+                if hasattr(obj, key):
+                    return getattr(obj, key)
+                try:
+                    return obj[key]
+                except (KeyError, TypeError):
+                    return default
+
+            st.json({
+                "rows": _get(stats, "rows"),
+                "fields": _get(stats, "fields"),
+                "bytes": _get(stats, "bytes"),
+                "hash": _get(stats, "hash"),
+            })
+
+# 9. TRANSFORM ------------------------------------------------------------
+with tabs[8]:
+    st.subheader("Feature 9 — `transform()`: clean / reshape data")
+    st.caption("Two common steps: keep only some columns, or filter rows by a formula.")
+
+    st.markdown("**9a. Keep only selected columns** (`steps.field_filter`)")
+    st.code(
+        'from frictionless import transform, steps\n'
+        'target = transform(path, steps=[steps.field_filter(names=["id", "name"])])',
+        language="python",
+    )
+    path9 = file_picker("transform_file_a")
+    cols = st.text_input("Columns to keep (comma-separated)", value="id,name", key="keep_cols")
+    if st.button("Transform: keep columns", key="btn_transform_fields"):
+        names = [c.strip() for c in cols.split(",") if c.strip()]
+        target = f.transform_keep_fields(path9, names)
+        st.table([dict(row) for row in target.read_rows()])
+
+    st.divider()
+    st.markdown("**9b. Filter rows by a formula** (`steps.row_filter`)")
+    st.code(
+        'target = transform(path, steps=[\n'
+        '    steps.table_normalize(),\n'
+        '    steps.row_filter(formula="population > 50000000"),\n'
         '])',
         language="python",
     )
-    if st.button("Insert sample batch of 3 contributors", key="btn_batch"):
-        sample_rows = [
-            ("Andrew", "Kuchling", 5),
-            ("James", "Henstridge", 12),
-            ("Daniele", "Varrazzo", 30),
-        ]
-        msg = f.insert_many(bliss, sample_rows)
-        bliss.commit()
-        st.success(msg)
+    path9b = file_picker("transform_file_b")
+    formula = st.text_input("Row filter formula", value="population > 50000000", key="row_formula")
+    if st.button("Transform: filter rows", key="btn_transform_rows"):
+        target = f.transform_filter_rows(path9b, formula)
+        st.table([dict(row) for row in target.read_rows()])
 
-# 4. CHAINED run().commit() ---------------------------------------------
-with tabs[3]:
-    st.subheader("Feature 4 — `run()` returns `self`, so chain `.commit()`")
-    st.code(
-        'bliss.run("INSERT INTO contributors VALUES (?, ?, ?)", '
-        '(firstname, lastname, commits)).commit()',
-        language="python",
-    )
-    c1, c2, c3 = st.columns(3)
-    fn2 = c1.text_input("First name", value="Marc-Andre", key="chain_fn")
-    ln2 = c2.text_input("Last name", value="Lemburg", key="chain_ln")
-    cm2 = c3.number_input("Commits", min_value=0, value=50, key="chain_cm")
-    if st.button("Insert + commit in one chained call", key="btn_chain"):
-        msg = f.insert_and_commit(bliss, fn2, ln2, int(cm2))
-        st.success(msg)
-
-# 5. COMMIT ---------------------------------------------------------------
-with tabs[4]:
-    st.subheader("Feature 5 — `commit()` on its own")
-    st.caption("Shortcut for `bliss.connection.commit()`.")
-    st.code('bliss.commit()', language="python")
-    if st.button("Commit current transaction", key="btn_commit"):
-        msg = f.commit(bliss)
-        st.success(msg)
-
-# 6. FETCH ONE --------------------------------------------------------------
-with tabs[5]:
-    st.subheader("Feature 6 — `one()`: fetch a single row")
-    st.caption(
-        "Multiple columns selected → `one()` returns a **namedtuple**."
-    )
-    st.code(
-        'bliss.one("SELECT firstname, lastname, commits FROM contributors '
-        'WHERE lastname = ?", (lastname,))',
-        language="python",
-    )
-    existing = f.list_lastnames(bliss)
-    if existing:
-        chosen = st.selectbox("Lastname to look up", existing, key="one_ln")
-        if st.button("Fetch one", key="btn_one"):
-            row = f.fetch_one(bliss, chosen)
-            if row is None:
-                st.warning("No matching row.")
-            else:
-                st.success(f"Got back: `{row}`  (type: `{type(row).__name__}`)")
-                st.write(f"row.firstname = **{row.firstname}**, row.commits = **{row.commits}**")
-    else:
-        st.info("No contributors yet — insert some rows in the earlier tabs first.")
-
-    st.divider()
-    st.caption("`one()` also returns a plain scalar when only one column is selected:")
-    st.code('bliss.one("SELECT COUNT(*) FROM contributors")', language="python")
-    if st.button("Count rows (scalar one())", key="btn_count_one"):
-        n = f.count_rows(bliss)
-        st.success(f"COUNT(*) = {n}  (type: `{type(n).__name__}`)")
-
-# 7. FETCH ALL --------------------------------------------------------------
-with tabs[6]:
-    st.subheader("Feature 7 — `all()`: fetch every row")
-    st.caption("Multiple columns selected → `all()` returns a list of namedtuples.")
-    st.code(
-        'bliss.all("SELECT firstname, lastname, commits FROM contributors '
-        'ORDER BY commits DESC")',
-        language="python",
-    )
-    if st.button("Fetch all contributors", key="btn_all"):
-        records = f.fetch_all(bliss)
-        render_records(records, empty_msg="Table is empty — insert some rows first.")
-
-    st.divider()
-    st.caption("Single column selected → `all()` returns a plain list of scalars:")
-    st.code('bliss.all("SELECT lastname FROM contributors ORDER BY lastname")', language="python")
-    if st.button("List lastnames only", key="btn_lastnames"):
-        st.write(f.list_lastnames(bliss))
-
-# 8. UPDATE -------------------------------------------------------------
-with tabs[7]:
-    st.subheader("Feature 8 — `run()` for UPDATE")
-    st.code(
-        'bliss.run("UPDATE contributors SET commits = ? WHERE lastname = ?", '
-        '(new_commits, lastname))',
-        language="python",
-    )
-    existing2 = f.list_lastnames(bliss)
-    if existing2:
-        target = st.selectbox("Lastname to update", existing2, key="upd_ln")
-        new_val = st.number_input("New commit count", min_value=0, value=0, key="upd_val")
-        if st.button("Update", key="btn_update"):
-            msg = f.update_commits(bliss, target, int(new_val))
-            bliss.commit()
-            st.success(msg)
-    else:
-        st.info("No contributors yet — insert some rows in the earlier tabs first.")
-
-# 9. DELETE ---------------------------------------------------------------
-with tabs[8]:
-    st.subheader("Feature 9 — `run()` for DELETE")
-    st.code('bliss.run("DELETE FROM contributors WHERE lastname = ?", (lastname,))', language="python")
-    existing3 = f.list_lastnames(bliss)
-    if existing3:
-        target3 = st.selectbox("Lastname to delete", existing3, key="del_ln")
-        if st.button("Delete", key="btn_delete"):
-            msg = f.delete_contributor(bliss, target3)
-            bliss.commit()
-            st.success(msg)
-    else:
-        st.info("No contributors yet — insert some rows in the earlier tabs first.")
-
-# 10. RESET / DROP TABLE -----------------------------------------------
+# 10. SAVE SCHEMA -------------------------------------------------------------
 with tabs[9]:
-    st.subheader("Feature 10 — `run()` for DDL: DROP TABLE (reset demo)")
-    st.code('bliss.run("DROP TABLE IF EXISTS contributors")', language="python")
-    st.warning("This wipes all demo data so you can start fresh.")
-    if st.button("Drop table", key="btn_drop"):
-        msg = f.drop_table(bliss)
-        f.create_table(bliss)
-        bliss.commit()
-        st.success(msg + " (recreated empty, ready to use again)")
-
-# --- Always-visible live view of current table state --------------------
-st.divider()
-st.subheader("📋 Current `contributors` table")
-records = f.fetch_all(bliss)
-render_records(records, empty_msg="Table is empty.")
-col_a, col_b = st.columns(2)
-col_a.metric("Row count", f.count_rows(bliss) or 0)
-col_b.metric("Total commits", f.total_commits(bliss) or 0)
+    st.subheader("Feature 10 — `Schema.to_json()` / `.to_yaml()`: save metadata")
+    st.code('schema.to_json("schema.json")\nschema.to_yaml("schema.yaml")', language="python")
+    st.caption(
+        "Uses the schema built in tab 5 if available, otherwise describes "
+        "the chosen sample file first."
+    )
+    path10 = file_picker("save_schema_file")
+    fmt = st.radio("Save as", ["JSON", "YAML"], key="save_fmt", horizontal=True)
+    if st.button("Save schema", key="btn_save_schema"):
+        schema = st.session_state.get("built_schema")
+        if schema is None:
+            resource = f.describe_file(path10)
+            schema = resource.schema
+            st.info("No schema built in tab 5 yet — describing the sample file instead.")
+        suffix = ".json" if fmt == "JSON" else ".yaml"
+        with tempfile.NamedTemporaryFile(mode="w", suffix=suffix, delete=False) as tmp:
+            out_path = tmp.name
+        f.save_schema(schema, out_path)
+        with open(out_path) as fh:
+            content = fh.read()
+        st.code(content, language="json" if fmt == "JSON" else "yaml")
+        st.download_button(
+            f"Download schema.{fmt.lower()}",
+            content,
+            file_name=f"schema{suffix}",
+        )

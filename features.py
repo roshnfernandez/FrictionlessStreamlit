@@ -1,128 +1,151 @@
 """
 features.py
 ============
-Ten small, self-contained demonstrations of the `sql` package
-(https://pypi.org/project/sql/, sql>=2022.4.0).
+Ten small, self-contained demonstrations of the `frictionless` package
+(https://pypi.org/project/frictionless/, the "DEVT" - Describe, Extract,
+Validate, Transform - framework).
 
-Every function below talks to the database ONLY through an `sql.SQL`
-instance's four real methods: run(), commit(), one(), all().
-No raw cursor.execute()/fetchone()/fetchall() calls are sprinkled in here -
-that would defeat the point of demoing the library. The only place a raw
-sqlite3 connection is used is to open the connection itself, since `sql.SQL`
-wraps -- but does not create -- a DB API 2.0 connection.
+Every function below calls real frictionless top-level functions/classes:
+describe, extract, validate, Resource, Schema, Detector, Checklist, Pipeline,
+steps, checks.
+
+Requires: pip install frictionless
 """
-import sqlite3
-import sql
+from frictionless import (
+    Checklist,
+    Detector,
+    Field,
+    Pipeline,
+    Resource,
+    Schema,
+    checks,
+    describe,
+    extract,
+    steps,
+    validate,
+    system
+)
 
 
-def get_bliss(db_path=":memory:"):
-    """Open a sqlite3 connection and wrap it in sql.SQL, the package's
-    single entry point. Named `bliss` to match the package's own docs."""
-    connection = sqlite3.connect(db_path, check_same_thread=False)
-    return sql.SQL(connection)
+# 1. DESCRIBE -------------------------------------------------------------
+def describe_file(path):
+    """Feature 1: describe() - infer a schema (field names + types) from
+    a tabular file, without reading/validating all the data."""
+    resource = describe(path)
+    return resource
 
 
-# 1. CREATE TABLE -------------------------------------------------------
-def create_table(bliss):
-    """Feature 1: run() for DDL - create the contributors table."""
-    bliss.run(
-        "CREATE TABLE IF NOT EXISTS contributors "
-        "(firstname VARCHAR, lastname VARCHAR, commits INTEGER)"
+# 2. EXTRACT ----------------------------------------------------------------
+def extract_rows(path):
+    """Feature 2: extract() - read and normalize all rows from a file,
+    casting cells to the types inferred (or provided) by the schema.
+
+    In frictionless v5+, extract() always returns a dict keyed by resource
+    name, e.g. {'invalid': [Row(...), Row(...), ...]}.
+    This unwraps that single-resource result into just the list of rows.
+    """
+    result = extract(path)
+    if isinstance(result, dict):
+        # single-file source -> {resource_name: [rows]}; take the only value
+        rows = next(iter(result.values()))
+    else:
+        rows = result
+    return [row for row in rows]
+
+
+# 3. VALIDATE (basic) -------------------------------------------------------
+def validate_file(path):
+    """Feature 3: validate() - run frictionless default checks against a
+    file and return a Report. report.valid is True/False."""
+    with system.use_context(trusted=True):
+        report = validate(path)
+    return report
+
+
+# 4. VALIDATE WITH CUSTOM CHECKS --------------------------------------------
+def validate_with_sequential_check(path, field_name="id"):
+    """Feature 4: validate() with a Checklist - in v5, custom checks are
+    wrapped in a Checklist object."""
+    checklist = Checklist(checks=[checks.sequential_value(field_name=field_name)])
+    with system.use_context(trusted=True):
+        report = validate(path, checklist=checklist)
+    return report
+
+
+# 5. BUILD A SCHEMA MANUALLY -------------------------------------------------
+def build_schema(field_specs):
+    """Feature 5: Schema - construct a Table Schema by hand from field
+    definitions instead of inferring it. field_specs is a list of
+    (name, type_str) tuples, e.g. [("id", "integer"), ("name", "string")].
+    """
+    built_fields = []
+    for name, type_str in field_specs:
+        built_fields.append(Field(name=name))
+
+    schema = Schema(fields=built_fields)
+    return schema
+
+
+# 6. DETECTOR (custom inference behavior) ------------------------------------
+def describe_with_detector(path, field_names=None, field_type=None, sample_size=100):
+    """Feature 6: Detector - control how describe()/Resource() infer
+    metadata: override field names, force every field to one type, or
+    change how many rows are sampled for inference."""
+    detector_kwargs = {"sample_size": sample_size}
+    if field_names:
+        detector_kwargs["field_names"] = field_names
+    if field_type:
+        detector_kwargs["field_type"] = field_type
+
+    detector = Detector(**detector_kwargs)
+    resource = describe(path, detector=detector)
+    return resource
+
+
+# 7. REPORT.FLATTEN (simplify validation errors) -----------------------------
+def flatten_report(report, properties=None):
+    """Feature 7: Report.flatten() - turn a validation Report into a flat
+    list of [property, property, ...] rows, one per error."""
+    if properties is None:
+        properties = ["rowNumber", "fieldNumber", "type", "note"]
+    return report.flatten(properties)
+
+
+# 8. RESOURCE EXPLORATION (metadata + stats) ---------------------------------
+def explore_resource(path):
+    """Feature 8: Resource - open a resource and inspect its metadata
+    (format, encoding, schema) and stats (rows, bytes, hash) after a
+    read. Returns the opened resource object."""
+    resource = Resource(path)
+    resource.infer(stats=True)
+    return resource
+
+
+# 9. TRANSFORM (clean/reshape a resource) ------------------------------------
+def transform_keep_fields(path, field_names):
+    """Feature 9: Resource.transform() + Pipeline - keep only the given
+    columns, dropping the rest, producing a cleaned target resource."""
+    pipeline = Pipeline(steps=[steps.field_filter(names=field_names)])
+    target = Resource(path).transform(pipeline)
+    return target
+
+
+def transform_filter_rows(path, formula):
+    """Feature 9b: Resource.transform() + Pipeline - keep only rows for
+    which `formula` (a simpleeval expression over field names) is true."""
+    pipeline = Pipeline(
+        steps=[steps.table_normalize(), steps.row_filter(formula=formula)]
     )
-    return "Table 'contributors' created (or already existed)."
+    target = Resource(path).transform(pipeline)
+    return target
 
 
-# 2. DROP TABLE (reset) --------------------------------------------------
-def drop_table(bliss):
-    """Feature 2: run() for DDL - drop the table, useful for resetting demo."""
-    bliss.run("DROP TABLE IF EXISTS contributors")
-    return "Table 'contributors' dropped."
-
-
-# 3. SINGLE INSERT --------------------------------------------------------
-def insert_one(bliss, firstname, lastname, commits):
-    """Feature 3: run() with a single tuple of args - one parameterized INSERT."""
-    bliss.run(
-        "INSERT INTO contributors VALUES (?, ?, ?)",
-        (firstname, lastname, commits),
-    )
-    return f"Inserted {firstname} {lastname}."
-
-
-# 4. BATCH INSERT (executemany under the hood) ----------------------------
-def insert_many(bliss, rows):
-    """Feature 4: run() with a list of tuples - batch INSERT (executemany)."""
-    bliss.run("INSERT INTO contributors VALUES (?, ?, ?)", rows)
-    return f"Inserted {len(rows)} rows in one batch."
-
-
-# 5. CHAINED run().commit() ------------------------------------------------
-def insert_and_commit(bliss, firstname, lastname, commits):
-    """Feature 5: run() returns self, so commit() can be chained directly,
-    exactly as shown in the package README."""
-    bliss.run(
-        "INSERT INTO contributors VALUES (?, ?, ?)",
-        (firstname, lastname, commits),
-    ).commit()
-    return f"Inserted and committed {firstname} {lastname} in one chained call."
-
-
-# 6. COMMIT (explicit) ------------------------------------------------------
-def commit(bliss):
-    """Feature 6: commit() - shortcut for connection.commit()."""
-    bliss.commit()
-    return "Transaction committed."
-
-
-# 7. FETCH ONE ROW ------------------------------------------------------
-def fetch_one(bliss, lastname):
-    """Feature 7: one() - fetch a single row. Returns a namedtuple since
-    the query selects multiple columns."""
-    return bliss.one(
-        "SELECT firstname, lastname, commits FROM contributors WHERE lastname = ?",
-        (lastname,),
-    )
-
-
-# 8. FETCH ALL ROWS -----------------------------------------------------
-def fetch_all(bliss):
-    """Feature 8: all() - fetch every row, ordered by commits desc."""
-    return bliss.all(
-        "SELECT firstname, lastname, commits FROM contributors "
-        "ORDER BY commits DESC"
-    )
-
-
-# 9. UPDATE ---------------------------------------------------------------
-def update_commits(bliss, lastname, new_commits):
-    """Feature 9: run() for an UPDATE statement."""
-    bliss.run(
-        "UPDATE contributors SET commits = ? WHERE lastname = ?",
-        (new_commits, lastname),
-    )
-    return f"Updated commits for {lastname} to {new_commits}."
-
-
-# 10. DELETE ----------------------------------------------------------------
-def delete_contributor(bliss, lastname):
-    """Feature 10: run() for a DELETE statement."""
-    bliss.run("DELETE FROM contributors WHERE lastname = ?", (lastname,))
-    return f"Deleted contributor with lastname {lastname}."
-
-
-# Bonus / supporting helpers used by the UI (still only via SQL methods) ---
-def count_rows(bliss):
-    """Uses one() on a single-column aggregate query -> returns a scalar."""
-    return bliss.one("SELECT COUNT(*) FROM contributors")
-
-
-def total_commits(bliss):
-    """Uses one() on a single-column aggregate query -> returns a scalar
-    (None if the table is empty, matching sql.SQL.one's documented behavior)."""
-    return bliss.one("SELECT SUM(commits) FROM contributors")
-
-
-def list_lastnames(bliss):
-    """Uses all() on a single-column query -> returns a plain list of
-    scalar values (no namedtuple wrapping, since only 1 column selected)."""
-    return bliss.all("SELECT lastname FROM contributors ORDER BY lastname")
+# 10. SAVE SCHEMA TO DISK -----------------------------------------------------
+def save_schema(schema, out_path):
+    """Feature 10: Schema.to_json()/to_yaml() - persist a schema (built by
+    hand or inferred via describe) to a descriptor file on disk."""
+    if out_path.endswith((".yaml", ".yml")):
+        schema.to_yaml(out_path)
+    else:
+        schema.to_json(out_path)
+    return out_path
